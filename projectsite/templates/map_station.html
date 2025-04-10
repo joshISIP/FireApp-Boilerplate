@@ -1,92 +1,165 @@
-{% extends 'base.html' %} {% load static %} {% block content %}
+{% extends 'base.html' %} 
+{% load static %} 
+{% block content %}
+
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
 
 <div class="page-inner">
-    <div class="page-header">
-        <h4 class="page-title">Dashboard</h4>
-        <ul class="breadcrumbs">
-            <li class="nav-home">
-                <a href="#">
-                    <i class="flaticon-home"></i>
-                </a>
-            </li>
-            <li class="separator">
-                <i class="flaticon-right-arrow"></i>
-            </li>
-            <li class="nav-item">
-                <a href="#">Maps</a>
-            </li>
-            <li class="separator">
-                <i class="flaticon-right-arrow"></i>
-            </li>
-            <li class="nav-item">
-                <a href="#">Stations</a>
-            </li>
-        </ul>
-    </div>
-
-    <div class="row">
-        <div class="col-md-12">
-            <div class="card card-transparent">
-                <div class="card-header">
-                    <h4 class="card-title text-center">Fire Stations</h4>
-                    <p class="card-category text-center">Looks great on any resolution. Made by our
-                        friends from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>.
-                    </p>
-                </div>
-                <div class="card-body">
-                    <div class="col-md-10 m-auto">
-                        <div id="map" style="width: 100%; height: 400px"></div>
-                    </div>
-                </div>
-            </div>
+  <div class="page-header">
+    <h4 class="page-title">Dashboard</h4>
+    <ul class="breadcrumbs">
+      <li class="nav-home">
+        <a href="#">
+          <i class="flaticon-home"></i>
+        </a>
+      </li>
+      <li class="separator">
+        <i class="flaticon-right-arrow"></i>
+      </li>
+      <li class="nav-item">
+        <a href="#">Maps</a>
+      </li>
+      <li class="separator">
+        <i class="flaticon-right-arrow"></i>
+      </li>
+      <li class="nav-item">
+        <a href="#">Stations</a>
+      </li>
+    </ul>
+  </div>
+  <div class="row">
+    <div class="col-md-12">
+      <div class="card card-transparent">
+        <div class="card-header">
+          <h4 class="card-title text-center">Fire Stations</h4>
+          <p class="card-category text-center">Looks great on any resolution. Made by our friends from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>.</p>
         </div>
+        <div class="card-body">
+         \
+            <div id="map" style="width: 100%; height: 400px"></div>
+          <div class="form-group">
+            <label for="cityFilter">Filter by City:</label>
+            <select id="cityFilter" class="form-control">
+              <option value="">All Cities</option>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
+  </div>
 </div>
-
 <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
 <script>
-    var map = L.map('map').setView([9.81644, 118.72239], 13);
+  var map = L.map('map').setView([9.81644, 118.72239], 13);
 
-    var truckIcon = L.icon({
-        iconUrl: "{% static 'img/firetruck.png' %}",
-        iconSize: [50, 50],
-        iconAnchor: [25, 50],
-        popupAnchor: [0, -50]
-    });
+  var truckIcon = L.icon({
+  iconUrl: '../static/img/firetruck.png', // Replace with the path to your red marker icon
+  iconSize: [50, 50], // Adjust the size as needed
+  });
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-    }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
 
-    var markers = [];
-    var markerData = JSON.parse('{{ fireStations|safe|escapejs }}');
+  var markerData = JSON.parse('{{ fireStations|safe|escapejs }}');
+  // Create an array to hold all the markers
+  // Populate city filter dropdown
+  var cities = new Set();
+  markerData.forEach(function (data) {
+      cities.add(data.city);
+  });
+  cities.forEach(function (city) {
+      var option = document.createElement('option');
+      option.value = city;
+      option.textContent = city;
+      document.getElementById('cityFilter').appendChild(option);
+  });
 
-    markerData.forEach(function (data) {
-        var latitude = parseFloat(data.latitude);
-        var longitude = parseFloat(data.longitude);
+  // Function to add markers to the map
+  function addMarkers(data) {
+      data.forEach(function (data) {
+          var latitude = parseFloat(data.latitude);
+          var longitude = parseFloat(data.longitude);
 
-        var marker = L.marker([latitude, longitude], { icon: truckIcon }).addTo(map);
+          var marker = L.marker([latitude, longitude], { icon: truckIcon }).addTo(map);
 
-        // Show name + firetruck inside the popup
-        var popupContent = `
-            <div style="text-align:center;">
-                <strong>${data.name}</strong><br/>
-                <img src="{% static 'img/firetruck.png' %}" width="40" />
-            </div>
-        `;
+          // Create a popup and set its content
+          var popupContent = data.name;
+          marker.bindPopup(popupContent);
 
-        marker.bindPopup(popupContent);
+          // Bind mouseover and mouseout events to the marker
+          marker.on('mouseover', function (e) {
+              this.openPopup();
+          });
 
-        marker.on('mouseover', function (e) {
-            this.openPopup();
-        });
+          marker.on('mouseout', function (e) {
+              this.closePopup();
+          });
 
-        marker.on('mouseout', function (e) {
-            this.closePopup();
-        });
+          // Add the marker to the markers array
+          markers.push(marker);
+      });
+  }
 
-        markers.push(marker);
-    });
+  // Add fire station markers
+  addMarkers(markerData);
+
+  // Add 10 random firetruck markers
+  for (var i = 0; i < 10; i++) {
+      var lat = 9.81644 + (Math.random() - 0.5) * 0.1;
+      var lng = 118.72239 + (Math.random() - 0.5) * 0.1;
+      var firetruckMarker = L.marker([lat, lng], { icon: truckIcon }).addTo(map);
+      firetruckMarker.bindPopup('Firetruck ' + (i + 1));
+  }
+
+  // Filter markers by city
+  document.getElementById('cityFilter').addEventListener('change', function () {
+      var selectedCity = this.value;
+
+      // Remove existing markers
+      markers.forEach(function (marker) {
+          map.removeLayer(marker);
+      });
+      markers = [];
+
+      // Filter and add markers
+      var filteredData = selectedCity
+          ? markerData.filter(function (data) {
+                return data.city === selectedCity;
+            })
+          : markerData;
+
+      addMarkers(filteredData);
+  });
+
+  // Define the marker data
+  var markerData = {{ fireStations|safe }};
+
+  // Loop through the marker data and create markers
+  markerData.forEach(function (data) {
+      var latitude = parseFloat(data.latitude);
+      var longitude = parseFloat(data.longitude);
+
+      var marker = L.marker([latitude, longitude], { icon: truckIcon }).addTo(map);
+
+      // Create a popup and set its content
+      var popupContent = data.name;
+      var popup = L.popup().setContent(popupContent);
+
+      marker.bindPopup(popupContent);
+
+
+      // Bind mouseover and mouseout events to the marker
+      marker.on('mouseover', function (e) {
+          this.openPopup();
+      });
+
+      marker.on('mouseout', function (e) {
+          this.closePopup();
+      });
+
+      // Add the marker to the markers array
+      markers.push(marker);
+  });
 </script>
 {% endblock %}
