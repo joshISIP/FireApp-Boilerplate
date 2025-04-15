@@ -25,7 +25,7 @@ SECRET_KEY = "django-insecure-d@4a$whi@(x03p+^ccwzokc$xcs*)qez!1(p_bdyvq1ebk6!3e
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['charlesfireapp.pythonanywhere.com','127.0.0.1']
 
 
 # Application definition
@@ -39,6 +39,8 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "fire",
     "widget_tweaks",
+    "boats",
+    'django_extensions',
 ]
 
 MIDDLEWARE = [
@@ -119,9 +121,9 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, "static"),  # global /static/ folder
-]
+STATICFILES_DIRS = (
+    BASE_DIR / 'static',
+)
 
 
 # Default primary key field type

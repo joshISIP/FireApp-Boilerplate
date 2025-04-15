@@ -1,7 +1,11 @@
 from django.shortcuts import render
-from django.views.generic import ListView, CreateView, UpdateView, DeleteView
+from django.views.generic import ListView, CreateView, UpdateView, DeleteView, DetailView
+from django.db.models import Q
 from django.urls import reverse_lazy
-from fire.models import Locations, Incident, FireStation, WeatherConditions, FireTruck, Firefighters
+
+from django.contrib import messages
+
+from fire.models import Locations, Incident, FireStation, WeatherConditions, FireTruck, Firefighters, Boat
 from fire.forms import Loc_Form, Incident_Form, FireStationzForm, Weather_condition, Firetruckform, FirefightersForm
 from django.db.models.query import QuerySet
 from django.db.models import Q
@@ -15,23 +19,13 @@ from django.db.models.functions import ExtractMonth
 from django.db.models import Count
 from datetime import datetime
 
-
+# ======================
+# MAIN VIEWS
+# ======================
 class HomePageView(ListView):
     model = Locations
     context_object_name = 'home'
     template_name = "home.html"
-
-class ChartView(ListView):
-    template_name = 'chart.html'
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        return context
-    
-    def get_queryset(self, *args, **kwargs):
-        pass
-    
-
     
 class ChartView(ListView):
     template_name = 'chart.html'
@@ -43,55 +37,40 @@ class ChartView(ListView):
     def get_queryset(self, *args, **kwargs):
         pass
 
-
+# ======================
+# CHART DATA VIEWS
+# ======================
 def PieCountbySeverity(request):
     query = '''
     SELECT severity_level, COUNT(*) as count
     FROM fire_incident
     GROUP BY severity_level
     '''
-    data = {}
     with connection.cursor() as cursor:
         cursor.execute(query)
         rows = cursor.fetchall()
 
-    if rows:
-        # Construct the dictionary with severity level as keys and count as values
-        data = {severity: count for severity, count in rows}
-    else:
-        data = {}
-
+    data = {severity: count for severity, count in rows} if rows else {}
     return JsonResponse(data)
 
 def LineCountbyMonth(request):
-
     current_year = datetime.now().year
-
     result = {month: 0 for month in range(1, 13)}
 
-    incidents_per_month = Incident.objects.filter(date_time__year=current_year) \
-        .values_list('date_time', flat=True)
+    incidents = Incident.objects.filter(date_time__year=current_year).values_list('date_time', flat=True)
+    for date_time in incidents:
+        result[date_time.month] += 1
 
-    # Counting the number of incidents per month
-    for date_time in incidents_per_month:
-        month = date_time.month
-        result[month] += 1
-
-    # If you want to convert month numbers to month names, you can use a dictionary mapping
     month_names = {
         1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
         7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'
     }
 
-    result_with_month_names = {
-        month_names[int(month)]: count for month, count in result.items()}
-
-    return JsonResponse(result_with_month_names)
+    return JsonResponse({month_names[month]: count for month, count in result.items()})
 
 def MultilineIncidentTop3Country(request):
-
     query = '''
-        SELECT 
+    SELECT 
         fl.country,
         strftime('%m', fi.date_time) AS month,
         COUNT(fi.id) AS incident_count
@@ -126,35 +105,18 @@ def MultilineIncidentTop3Country(request):
         cursor.execute(query)
         rows = cursor.fetchall()
 
-    # Initialize a dictionary to store the result
+    months = set(str(i).zfill(2) for i in range(1, 13))
     result = {}
 
-    # Initialize a set of months from January to December
-    months = set(str(i).zfill(2) for i in range(1, 13))
-
-    # Loop through the query results
-    for row in rows:
-        country = row[0]
-        month = row[1]
-        total_incidents = row[2]
-
-        # If the country is not in the result dictionary, initialize it with all months set to zero
+    for country, month, count in rows:
         if country not in result:
-            result[country] = {month: 0 for month in months}
+            result[country] = {m: 0 for m in months}
+        result[country][month] = count
 
-        # Update the incident count for the corresponding month
-        result[country][month] = total_incidents
-
-    # Ensure there are always 3 countries in the result
     while len(result) < 3:
-        # Placeholder name for missing countries
-        missing_country = f"Country {len(result) + 1}"
-        result[missing_country] = {month: 0 for month in months}
+        result[f"Country {len(result) + 1}"] = {m: 0 for m in months}
 
-    for country in result:
-        result[country] = dict(sorted(result[country].items()))
-
-    return JsonResponse(result)
+    return JsonResponse({k: dict(sorted(v.items())) for k, v in result.items()})
 
 def multipleBarbySeverity(request):
     query = '''
@@ -171,68 +133,79 @@ def multipleBarbySeverity(request):
         cursor.execute(query)
         rows = cursor.fetchall()
 
-    result = {}
     months = set(str(i).zfill(2) for i in range(1, 13))
+    result = {}
 
-    for row in rows:
-        level = str(row[0])  # Ensure the severity level is a string
-        month = row[1]
-        total_incidents = row[2]
-
+    for level, month, count in rows:
         if level not in result:
-            result[level] = {month: 0 for month in months}
+            result[str(level)] = {m: 0 for m in months}
+        result[str(level)][month] = count
 
-        result[level][month] = total_incidents
+    return JsonResponse({k: dict(sorted(v.items())) for k, v in result.items()})
 
-    # Sort months within each severity level
-    for level in result:
-        result[level] = dict(sorted(result[level].items()))
-
-    return JsonResponse(result)
-
-
+# ======================
+# MAP VIEWS
+# ======================
 def map_station(request):
-     fireStations = FireStation.objects.values('name', 'latitude', 'longitude')
+    stations = FireStation.objects.values('name', 'latitude', 'longitude')
+    stations = [{
+        'name': s['name'],
+        'latitude': float(s['latitude']),
+        'longitude': float(s['longitude'])
+    } for s in stations]
 
-     for fs in fireStations:
-         fs['latitude'] = float(fs['latitude'])
-         fs['longitude'] = float(fs['longitude'])
+    return render(request, 'map_station.html', {'fireStations': stations})
 
-     fireStations_list = list(fireStations)
-
-     context = {
-         'fireStations': fireStations_list,
-     }
-
-     return render(request, 'map_station.html', context)
- 
 def fire_incident_map(request):
-    fireIncidents = Locations.objects.values('name', 'latitude', 'longitude')
+    incidents = Locations.objects.values('name', 'latitude', 'longitude')
+    incidents = [{
+        'name': i['name'],
+        'latitude': float(i['latitude']),
+        'longitude': float(i['longitude'])
+    } for i in incidents]
 
-    for fs in fireIncidents:
-        fs['latitude'] = float(fs['latitude'])
-        fs['longitude'] = float(fs['longitude'])
+    return render(request, 'fire_incident_map.html', {'fireIncidents': incidents})
 
-    fireIncidents_list = list(fireIncidents)  # Corrected variable name
+# ======================
+# BASE CRUD VIEWS
+# ======================
+class BaseListView(ListView):
+    paginate_by = 10
+    context_object_name = 'object_list'
+    
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if query := self.request.GET.get("q"):
+            qs = qs.filter(self.get_search_filter(query))
+        return qs
+    
+    def get_search_filter(self, query):
+        return Q()
 
-    context = {
-        'fireIncidents': fireIncidents_list,  # Corrected variable name
-    }
+class BaseCreateView(CreateView):
+    def form_valid(self, form):
+        messages.success(self.request, f"{self.model._meta.verbose_name} created successfully!")
+        return super().form_valid(form)
 
-    return render(request, 'fire_incident_map.html', context)
+class BaseUpdateView(UpdateView):
+    def form_valid(self, form):
+        messages.success(self.request, f"{self.model._meta.verbose_name} updated successfully!")
+        return super().form_valid(form)
+    
+class BaseDeleteView(DeleteView):
+    def form_valid(self, form):
+        messages.success(self.request, f"{self.model._meta.verbose_name} deleted successfully!")
+        return super().form_valid(form)
 
-def firestation_list(request):
-    firestations = FireStation.objects.all()
-    return render(request, 'stationlist.html', {'object_list': firestations})
-
-
-
-class firestationListView(ListView):
+# ======================
+# FIRE STATION VIEWS
+# ======================
+class FireStationListView(ListView):
     model = FireStation
-    template_name = 'station_list.html'
+    template_name = 'firestation/station_list.html'
     context_object_name = 'object_list'
     paginate_by = 10
-
+    
     def get_queryset(self, *args, **kwargs):
         qs = super().get_queryset(*args, **kwargs)
         query = self.request.GET.get("q")
@@ -244,96 +217,43 @@ class firestationListView(ListView):
                 Q(country__icontains=query)
             )
         return qs
-    
-class firestationCreateView(CreateView):
+
+class FireStationCreateView(CreateView):
     model = FireStation
     form_class = FireStationzForm
-    template_name= 'station_add.html'
+    template_name = 'firestation/station_add.html'
     success_url = reverse_lazy('station-list')
-    
-class firestationUpdateView(UpdateView):
+
+    def form_valid(self, form):
+        station_name = form.instance.name
+        messages.success(self.request, f'Fire Station "{station_name}" created successfully!')
+        return super().form_valid(form)
+
+class FireStationUpdateView(UpdateView):
     model = FireStation
     form_class = FireStationzForm
-    template_name= 'station_edit.html'
+    template_name = 'firestation/station_edit.html'
     success_url = reverse_lazy('station-list')
+
+    def form_valid(self, form):
+        station_name = form.instance.name
+        messages.success(self.request, f'Fire Station "{station_name}" updated successfully!')
+        return super().form_valid(form)
     
-class firestationDeleteView(DeleteView):
+class FireStationDeleteView(DeleteView):
     model = FireStation
     template_name= 'station_del.html'
     success_url = reverse_lazy('station-list')
     
+    def form_valid(self, form):
+        station_name = form.instance.name
+        messages.success(self.request, f'Fire Station "{station_name}" deleted successfully!')
+        return super().form_valid(form)
+    
 
-
-class IncidentListView(ListView):
-    model = Incident
-    template_name = 'incident_list.html'
-    context_object_name = 'object_list'
-    paginate_by = 10
-
-    def get_queryset(self, *args, **kwargs):
-        qs = super().get_queryset(*args, **kwargs)
-        query = self.request.GET.get("q")
-        if query:
-            qs = qs.filter(
-                Q(description__icontains=query) |
-                Q(severity_level__icontains=query) |
-                Q(location__name__icontains=query) |  # Assuming Locations model has a 'name' field
-                Q(date_time__icontains=query)  # Assuming you want to search by date_time
-            )
-        return qs
-    
-class IncidentCreateView(CreateView):
-    model = Incident
-    form_class =  Incident_Form
-    template_name= 'incident_add.html'
-    success_url = reverse_lazy('incident-list')
-    
-class IncidentUpdateView(UpdateView):
-    model = Incident
-    form_class =  Incident_Form
-    template_name= 'incident_edit.html'
-    success_url = reverse_lazy('incident-list')
-    
-class IncidentDeleteView(DeleteView):
-    model = Incident
-    template_name= 'incident_del.html'
-    success_url = reverse_lazy('incident-list')
-    
-class LocationListView(ListView):
-    model = Locations
-    template_name = 'loc_list.html'
-    context_object_name = 'object_list'
-    paginate_by = 10
-
-    def get_queryset(self, *args, **kwargs):
-        qs = super().get_queryset(*args, **kwargs)
-        query = self.request.GET.get("q")
-        if query:
-            qs = qs.filter(
-                Q(name__icontains=query) |
-                Q(address__icontains=query) |
-                Q(city__icontains=query) |
-                Q(country__icontains=query)
-            )
-        return qs
-    
-class LocationCreateView(CreateView):
-    model = Locations
-    form_class = Loc_Form
-    template_name= 'loc_add.html'
-    success_url = reverse_lazy('loc-list')
-    
-class LocationUpdateView(UpdateView):
-    model = Locations
-    form_class = Loc_Form
-    template_name= 'loc_edit.html'
-    success_url = reverse_lazy('loc-list')
-    
-class LocationDeleteView(DeleteView):
-    model = Locations
-    template_name= 'loc_del.html'
-    success_url = reverse_lazy('loc-list')
-
+# ======================
+# WEATHER CONDITION VIEWS
+# ======================
 class ConditionListView(ListView):
     model = WeatherConditions
     context_object_name = 'object_list'
@@ -352,26 +272,91 @@ class ConditionListView(ListView):
                 Q(weather_description__icontains=query)
             )
         return qs
-    
+
 class ConditionCreateView(CreateView):
     model = WeatherConditions
     form_class = Weather_condition
-    template_name = 'weather_add.html'
+    template_name = 'weather/weather_add.html'
     success_url = reverse_lazy('weather-list')
+
+    def form_valid(self, form):
+        location = form.instance.incident.location.name
+        messages.success(self.request, f'Weather condition for "{location}" created successfully!')
+        return super().form_valid(form)
 
 class ConditionUpdateView(UpdateView):
     model = WeatherConditions
     form_class = Weather_condition
-    template_name = 'weather_edit.html'
+    template_name = 'weather/weather-update.html'
     success_url = reverse_lazy('weather-list')
+    context_object_name = 'weather'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"Update Weather Conditions - Record #{self.object.id}"
+        return context
+
+    def form_valid(self, form):
+        try:
+            response = super().form_valid(form)
+            location = form.instance.incident.location.name
+            messages.success(
+                self.request,
+                f'Successfully updated weather conditions for "{location}"',
+                extra_tags='alert-success'
+            )
+            return response
+        except Exception as e:
+            messages.error(
+                self.request,
+                f'Error updating weather conditions: {str(e)}',
+                extra_tags='alert-danger'
+            )
+            return self.form_invalid(form)
+
+    def form_invalid(self, form):
+        # Print form errors to console for debugging
+        print("Form errors:", form.errors)
+        messages.error(
+            self.request,
+            'Please correct the errors below.',
+            extra_tags='alert-danger'
+        )
+        return super().form_invalid(form)
 
 class ConditionDeleteView(DeleteView):
     model = WeatherConditions
-    template_name = 'weather_del.html'
+    template_name = 'weather/weather_del.html'
     success_url = reverse_lazy('weather-list')
+    context_object_name = 'weather'
     
+    def get_object(self, queryset=None):
+        """Override to add permission checks"""
+        obj = super().get_object(queryset)
+        # Add any permission checks here if needed
+        # Example: if not self.request.user.can_delete_weather:
+        #     raise PermissionDenied
+        return obj
     
-    
+    def form_valid(self, form):
+        try:
+            condition = self.object
+            condition_name = condition.condition_name
+            response = super().form_valid(form)
+            messages.success(
+                self.request, 
+                f'Weather condition "{condition_name}" was successfully deleted!'
+            )
+            return response
+        except Exception as e:
+            messages.error(
+                self.request,
+                f'Error deleting weather condition: {str(e)}'
+            )
+            return self.form_invalid(form)
+# ======================
+# FIRETRUCK VIEWS
+# ======================
 class FiretruckListView(ListView):
     model = FireTruck
     context_object_name = 'firetruck'
@@ -384,32 +369,120 @@ class FiretruckListView(ListView):
         query = self.request.GET.get("q")
         if query:
             qs = qs.filter(Q(truck_number__icontains=query) | 
-              Q(model__icontains=query) | 
-              Q(capacity__icontains=query) | 
-              Q(station__name__icontains=query))
+            Q(model__icontains=query) | 
+            Q(capacity__icontains=query) | 
+            Q(station__name__icontains=query))
 
         return qs
 
 class FiretruckCreateView(CreateView):
     model = FireTruck
     form_class = Firetruckform
-    template_name = 'firetruck_add.html'
+    template_name = 'firetruck/firetruck_add.html'
     success_url = reverse_lazy('fireTruck-list')
+
+    def dispatch(self, request, *args, **kwargs):
+        """Add permission check here if needed"""
+        # Example permission check:
+        # if not request.user.has_perm('firetruck.add_firetruck'):
+        #     raise PermissionDenied
+        return super().dispatch(request, *args, **kwargs)
+
+    def form_valid(self, form):
+        try:
+            response = super().form_valid(form)
+            truck_number = form.instance.truck_number
+            messages.success(
+                self.request, 
+                f'Fire Truck #{truck_number} was successfully created!',
+                extra_tags='success'
+            )
+            return response
+        except Exception as e:
+            messages.error(
+                self.request,
+                f'Error creating fire truck: {str(e)}',
+                extra_tags='danger'
+            )
+            return self.form_invalid(form)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['page_title'] = 'Add New Fire Truck'
+        return context
 
 class FiretruckUpdateView(UpdateView):
     model = FireTruck
     form_class = Firetruckform
-    template_name = 'firetruck_edit.html'
+    template_name = 'firetruck/firetruck-update.html'
     success_url = reverse_lazy('fireTruck-list')
+    context_object_name = 'firetruck'
 
+    def dispatch(self, request, *args, **kwargs):
+        """Add permission check here if needed"""
+        # Example permission check:
+        # if not request.user.has_perm('firetruck.change_firetruck'):
+        #     raise PermissionDenied
+        return super().dispatch(request, *args, **kwargs)
+
+    def form_valid(self, form):
+        try:
+            response = super().form_valid(form)
+            truck_number = form.instance.truck_number
+            messages.success(
+                self.request,
+                f'Fire Truck #{truck_number} was successfully updated!',
+                extra_tags='success'
+            )
+            return response
+        except Exception as e:
+            messages.error(
+                self.request,
+                f'Error updating fire truck: {str(e)}',
+                extra_tags='danger'
+            )
+            return self.form_invalid(form)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['page_title'] = f'Update Fire Truck #{self.object.truck_number}'
+        return context
+    
 class FiretruckDeleteView(DeleteView):
-    model =  FireTruck
-    template_name = 'firetruck_del.html'
+    model = FireTruck
+    template_name = 'firetruck/firetruck_del.html'
     success_url = reverse_lazy('fireTruck-list')
-    
-    
+    context_object_name = 'firetruck'
 
+    def dispatch(self, request, *args, **kwargs):
+        return super().dispatch(request, *args, **kwargs)
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['page_title'] = f'Delete Fire Truck #{self.object.truck_number}'
+        return context
+
+    def form_valid(self, form):
+        try:
+            truck_number = self.object.truck_number
+            response = super().form_valid(form)
+            messages.success(
+                self.request,
+                f'Fire Truck #{truck_number} was successfully deleted!',
+                extra_tags='success'
+            )
+            return response
+        except Exception as e:
+            messages.error(
+                self.request,
+                f'Error deleting fire truck: {str(e)}',
+                extra_tags='danger'
+            )
+            return self.form_invalid(form)
+
+# ======================
+# FIREFIGHTER VIEWS
+# ======================
 class FirefightersListView(ListView):
     model = Firefighters
     context_object_name = 'firefighters'
@@ -426,16 +499,260 @@ class FirefightersListView(ListView):
 class FirefightersCreateView(CreateView):
     model = Firefighters
     form_class = FirefightersForm
-    template_name = 'firefighter_add.html'
+    template_name = 'firefighter/firefighter_add.html'
     success_url = reverse_lazy('firefighters-list')
+
+    def form_valid(self, form):
+        name = form.instance.name
+        messages.success(self.request, f'Firefighter "{name}" created successfully!')
+        return super().form_valid(form)
 
 class FirefightersUpdateView(UpdateView):
     model = Firefighters
     form_class = FirefightersForm
-    template_name = 'firefighter_edit.html'
+    template_name = 'firefighter/firefighter-update.html'
     success_url = reverse_lazy('firefighters-list')
 
+    def form_valid(self, form):
+        name = form.instance.name
+        messages.success(self.request, f'Firefighter "{name}" updated successfully!')
+        return super().form_valid(form)
+
+    
 class FirefightersDeleteView(DeleteView):
     model = Firefighters
-    template_name = 'firefighter_del.html'
+    template_name = 'firefighter/firefighter_del.html'
     success_url = reverse_lazy('firefighters-list')
+    
+    def delete(self, request, *args, **kwargs):
+        firefighter = self.get_object()
+        name = firefighter.name
+        response = super().delete(request, *args, **kwargs)
+        messages.success(
+            request,
+            f'Firefighter "{name}" was deleted successfully!',
+            extra_tags='toast success'
+        )
+        return response
+
+# ======================
+# INCIDENT VIEWS
+# ======================
+class IncidentListView(ListView):
+    model = Incident
+    template_name = 'incident_list.html'
+    context_object_name = 'object_list'
+    paginate_by = 10
+
+    def get_queryset(self, *args, **kwargs):
+        qs = super().get_queryset(*args, **kwargs)
+        query = self.request.GET.get("q")
+        if query:
+            qs = qs.filter(
+                Q(description__icontains=query) |
+                Q(severity_level__icontains=query) |
+                Q(location__name__icontains=query) |  # Assuming Locations model has a 'name' field
+                Q(date_time__icontains=query)  # Assuming you want to search by date_time
+            )
+        return qs
+    
+
+class IncidentCreateView(CreateView):
+    model = Incident
+    form_class = Incident_Form
+    template_name = 'incident/incident-add.html'
+    success_url = reverse_lazy('incident-list')
+
+    def form_valid(self, form):
+        description = form.instance.description[:50] + "..." if len(form.instance.description) > 50 else form.instance.description
+        messages.success(self.request, f'Incident "{description}" created successfully!')
+        return super().form_valid(form)
+
+class IncidentUpdateView(UpdateView):
+    model = Incident
+    form_class = Incident_Form
+    template_name = 'incident/incident-update.html'
+    success_url = reverse_lazy('incident-list')
+
+    def form_valid(self, form):
+        description = form.instance.description[:50] + "..." if len(form.instance.description) > 50 else form.instance.description
+        messages.success(self.request, f'Incident "{description}" updated successfully!')
+        return super().form_valid(form)
+
+class IncidentDeleteView(DeleteView):
+    model = Incident
+    template_name = 'incident/incident_del.html'  # Note the folder structure
+    success_url = reverse_lazy('incident-list')
+    context_object_name = 'incident'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"Delete Incident #{self.object.id}"
+        return context
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        description = self.object.description[:50] + "..." if len(self.object.description) > 50 else self.object.description
+        messages.success(self.request, f'Successfully deleted incident: "{description}"')
+        return response
+
+
+# ======================
+# LOCATION VIEWS
+# ======================
+class IncidentListView(ListView):
+    model = Incident
+    template_name = 'incident_list.html'
+    context_object_name = 'object_list'
+    paginate_by = 10
+
+    def get_queryset(self, *args, **kwargs):
+        qs = super().get_queryset(*args, **kwargs)
+        query = self.request.GET.get("q")
+        if query:
+            qs = qs.filter(
+                Q(description__icontains=query) |
+                Q(severity_level__icontains=query) |
+                Q(location__name__icontains=query) |  # Assuming Locations model has a 'name' field
+                Q(date_time__icontains=query)  # Assuming you want to search by date_time
+            )
+        return qs
+
+class LocationListView(ListView):
+    model = Locations
+    template_name = 'loc_list.html'
+    context_object_name = 'object_list'
+    paginate_by = 10
+
+    def get_queryset(self, *args, **kwargs):
+        qs = super().get_queryset(*args, **kwargs)
+        query = self.request.GET.get("q")
+        if query:
+            qs = qs.filter(
+                Q(name__icontains=query) |
+                Q(address__icontains=query) |
+                Q(city__icontains=query) |
+                Q(country__icontains=query)
+            )
+        return qs
+class LocationCreateView(CreateView):
+    model = Locations
+    form_class = Loc_Form
+    template_name = 'location/loc_add.html'
+    success_url = reverse_lazy('loc-list')
+
+    def form_valid(self, form):
+        name = form.instance.name
+        messages.success(self.request, f'Location "{name}" created successfully!')
+        return super().form_valid(form)
+
+class LocationUpdateView(UpdateView):
+    model = Locations
+    form_class = Loc_Form
+    template_name = 'location/location-update.html'
+    success_url = reverse_lazy('loc-list')
+
+    def form_valid(self, form):
+        name = form.instance.name
+        messages.success(self.request, f'Location "{name}" updated successfully!')
+        return super().form_valid(form)
+
+class LocationDeleteView(DeleteView):
+    model = Locations
+    template_name = 'location/loc_del.html'
+    success_url = reverse_lazy('loc-list')
+    context_object_name = 'location'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context['title'] = f"Delete Location #{self.object.id}"
+        return context
+
+    def form_valid(self, form):
+        name = self.object.name
+        response = super().form_valid(form)
+        messages.success(self.request, 
+            f'Location "{name}" was successfully deleted.',
+            extra_tags='danger'  # Using danger to match the delete operation
+        )
+        return response
+# ======================
+# BOAT VIEWS
+# ======================
+class BoatListView(ListView):
+    model = Boat
+    template_name = "boats/boat_form.html"
+    context_object_name = "boats"
+
+    def get_search_filter(self, query):
+        return (Q(name__icontains=query) |
+                Q(boat_type__icontains=query) |
+                Q(status__icontains=query) |
+                Q(location__name__icontains=query))
+
+class BoatCreateView(BaseCreateView):
+    model = Boat
+    fields = "__all__"
+    template_name = "boats/boat_form.html"
+    success_url = reverse_lazy('boat-list')
+
+    def validate_dimensions(self, form_data):
+        errors = []
+        dimension_fields = ['length', 'width', 'height']
+        
+        for field in dimension_fields:
+            value = form_data.get(field)
+            try:
+                if float(value) <= 0:
+                    errors.append(f"{field.capitalize()} must be greater than 0.")
+            except (ValueError, TypeError):
+                errors.append(f"{field.capitalize()} must be a valid number.")
+        return errors
+
+    def form_valid(self, form):
+        errors = self.validate_dimensions(form.cleaned_data)
+        if errors:
+            for error in errors:
+                messages.error(self.request, error)
+            return self.form_invalid(form)
+        
+        boat_name = form.instance.name if form.instance.name else "New Boat"
+        messages.success(self.request, f'Boat "{boat_name}" was created successfully!')
+        return super().form_valid(form)
+
+class BoatUpdateView(BaseUpdateView):
+    model = Boat
+    fields = "__all__"
+    template_name = "boats/boat_form.html"
+    success_url = reverse_lazy('boat-list')
+
+    def validate_dimensions(self, form_data):
+        errors = []
+        dimension_fields = ['length', 'width', 'height']
+        
+        for field in dimension_fields:
+            value = form_data.get(field)
+            try:
+                if float(value) <= 0:
+                    errors.append(f"{field.capitalize()} must be greater than 0.")
+            except (ValueError, TypeError):
+                errors.append(f"{field.capitalize()} must be a valid number.")
+        return errors
+
+    def form_valid(self, form):
+        errors = self.validate_dimensions(form.cleaned_data)
+        if errors:
+            for error in errors:
+                messages.error(self.request, error)
+            return self.form_invalid(form)
+        
+        boat_name = form.instance.name if form.instance.name else "Boat"
+        messages.success(self.request, f'Boat "{boat_name}" was updated successfully!')
+        return super().form_valid(form)
+    
+def dashboard_chart(request):
+    """View for displaying dashboard charts"""
+    context = {
+        # You can add any context data needed for your dashboard
+    }
+    return render(request, 'dashboard/chart.html', context)
