@@ -40,7 +40,7 @@ INSTALLED_APPS = [
     "fire",
     "widget_tweaks",
     "boats",
-    'django_extensions',
+    "django_extensions",
 ]
 
 MIDDLEWARE = [
