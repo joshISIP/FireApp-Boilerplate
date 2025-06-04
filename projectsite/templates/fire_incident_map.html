@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% load static %}
 {% block content %}
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
@@ -131,7 +132,7 @@ document.addEventListener("DOMContentLoaded", function() {
 var map = L.map('map').setView([9.81644, 118.72239], 13);
 
 var fireIcon = L.icon({
-    iconUrl: '../static/img/fireheart.png', // Replace with the correct path to your red marker icon
+    iconUrl: "{% static 'img/flame.png' %}", // Use Django static tag for correct path
     iconSize: [50, 50], // Adjust the size as needed
 });
 
