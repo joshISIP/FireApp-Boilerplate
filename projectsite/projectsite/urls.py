@@ -14,6 +14,7 @@ from fire.views import (
     FireStationListView,
     FireStationCreateView,
     FireStationUpdateView,
+    FireStationDeleteView,
     IncidentListView, 
     IncidentCreateView, 
     IncidentUpdateView,
@@ -55,14 +56,14 @@ urlpatterns = [
     
     
     # Map views
-    path('stations/', map_station, name='map_station'), 
+    path('stations/map/', map_station, name='map_station'),
     path('fire_incident_map/', fire_incident_map, name='fire_incidents_map'),
     
     # Fire Station 
-    path('stations/', FireStationListView.as_view(), name='station_list'),
-    path('station/create/', FireStationCreateView.as_view(), name='station_create'),
-    path('station/<int:pk>/update/', FireStationUpdateView.as_view(), name='station_update'),
-    
+    path('stations/', FireStationListView.as_view(), name='station-list'),
+    path('stations/add/', FireStationCreateView.as_view(), name='station-add'),
+    path('stations/<int:pk>/edit/', FireStationUpdateView.as_view(), name='station-update'),
+    path('stations/<int:pk>/delete/', FireStationDeleteView.as_view(), name='station-delete'),
     # Incident 
     path('incidents/', IncidentListView.as_view(), name='incident-list'),
     path('incident/create/', IncidentCreateView.as_view(), name='incident-add'),
